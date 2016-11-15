@@ -24,7 +24,7 @@
 #' x = observed(rnorm(10))
 #' x %~% normal(mu, sigma)
 #'
-#' draws <- sample(mu, sigma,
+#' draws <- samples(mu, sigma,
 #'                 n_samples = 100,
 #'                 warmup = 10)
 samples <- function (...,
@@ -97,10 +97,12 @@ samples <- function (...,
                            n_samples = warmup,
                            thin = thin,
                            verbose = verbose,
+                           guess_epsilon = FALSE,
                            control = con)
 
     # use the last draw of the full parameter vector as the init
     init <- attr(warmup_draws, 'last_x')
+    con$epsilon <- attr(warmup_draws, 'epsilon')
 
     if (verbose)
       message('sampling')
@@ -113,6 +115,7 @@ samples <- function (...,
                   n_samples = n_samples,
                   thin = thin,
                   verbose = verbose,
+                  guess_epsilon = FALSE,
                   control = con)
 
   # coerce to data.frame, but keep the sample density
@@ -134,6 +137,7 @@ hmc <- function (dag,
                  n_samples,
                  thin,
                  verbose,
+                 guess_epsilon = FALSE,
                  control = list(Lmin = 10,
                                 Lmax = 20,
                                 epsilon = 0.005)) {
@@ -148,6 +152,10 @@ hmc <- function (dag,
   dag$send_parameters(x)
   grad <- dag$gradients()
   logprob <- dag$log_density()
+
+  if (guess_epsilon)
+    epsilon <- guess_epsilon(dag, init, logprob, grad)
+
 
   # set up trace store (grab values of target variables from graph to get
   # dimension and names)
@@ -182,21 +190,25 @@ hmc <- function (dag,
     # start leapfrog steps
     reject <- FALSE
     p <- p_old + 0.5 * epsilon * grad
-    n_steps <- base::sample(Lmin:Lmax, 1)
+    n_steps <- sample(Lmin:Lmax, 1)
+
     for (l in seq_len(n_steps)) {
 
-      # step
-      x <- x + epsilon * p
+      # do a step
+      new_step <- leapfrog(list(x = x_old, p = p), dag, epsilon)
 
-      # send parameters
-      dag$send_parameters(x)
-      logprob <- dag$log_density()
-      grad <- dag$gradients()
+      # if it went awry, quit now
+      if (is.null(new_step)) {
 
-      # check gradients are finite
-      if (any(!is.finite(grad))) {
         reject <- TRUE
         break()
+
+      } else {
+
+        # otherwise, update the location an momemntum and continue
+        x <- new_step$x
+        p <- new_step$p
+
       }
 
       p <- p + epsilon * grad
@@ -219,12 +231,8 @@ hmc <- function (dag,
 
       # otherwise do the Metropolis accept/reject step
 
-      # inner products
-      p_prod <- (t(p) %*% p)[1, 1]
-      p_prod_old <- (t(p_old) %*% p_old)[1, 1]
-
       # acceptance ratio
-      log_accept_ratio = logprob - 0.5 * p_prod - logprob_old + 0.5 * p_prod_old
+      log_accept_ratio  <- log_accept_prob(logprob, p, logprob_old, p_old)
       log_u = log(runif(1))
 
       if (log_u < log_accept_ratio) {
@@ -251,16 +259,6 @@ hmc <- function (dag,
       dag$send_parameters(x)
       trace[i / thin, ] <- dag$trace_values()
       ljd[i / thin] <- dag$log_density()
-
-      # if (verbose) {
-      #
-      #   # optionally report acceptance statistics
-      #   acceptance_rate <- round(accept_count / i, 3)
-      #   message(sprintf('iteration %i, acceptance rate: %s',
-      #                   i,
-      #                   prettyNum(acceptance_rate)))
-      # }
-
     }
 
     if (verbose)
@@ -273,6 +271,135 @@ hmc <- function (dag,
 
   attr(trace, 'density') <- -ljd
   attr(trace, 'last_x') <- x
+  attr(trace, 'epsilon') <- epsilon
   trace
 
 }
+
+# do a single leapfrog step and return x and p in a list
+# if the step went bad, return a NULL instead
+leapfrog <- function(list, dag, epsilon) {
+  x <- list$x
+  p <- list$p
+
+  # move to new location
+  x <- x + epsilon * p
+
+  # evaluate
+  dag$send_parameters(x)
+  logprob <- dag$log_density()
+  grad <- dag$gradients()
+
+  # check gradients and density are finite
+  if (any(!is.finite(grad)) | !is.finite(logprob)) {
+
+    return (NULL)
+
+  } else {
+
+    # otherwise update and return
+    p <- p + epsilon * grad
+    return (list(x = x, p = p, logprob = logprob, grad = grad))
+
+  }
+}
+
+# log acceptance probability
+log_accept_prob <- function(logprob, p, logprob_old, p_old) {
+
+  # inner products
+  p_prod <- (t(p) %*% p)[1, 1]
+  p_prod_old <- (t(p_old) %*% p_old)[1, 1]
+
+  # log ratio
+  logprob - 0.5 * p_prod - logprob_old + 0.5 * p_prod_old
+}
+
+# make a reasonable guess at epsilon from the starting location
+guess_epsilon <- function(dag, x_old, logprob_old, grad_old) {
+
+  # initial conditions
+  epsilon <- 1
+  p_old <- rnorm(length(x_old))
+
+  # do a leapfrog step
+  new_step <- leapfrog(list(x = x_old, p = p_old),
+                 dag, epsilon)
+
+  # see how far to step in that direction
+  k <- 1
+  while(!is.finite(new_step$logprob) | !all(is.finite(new_step$grad))) {
+    k <- k * 0.5
+    new_step <- leapfrog(list(x = x, p = p_old), dag, epsilon * k)
+  }
+
+  # shrink epsilon to halfway there
+  epsilon <- epsilon * 0.5 * k
+
+  # get required elements
+  logprob <- new_step$logprob
+  p <- new_step$p
+
+  # now, get acceptance probability and direction toward 0.5 acceptance
+  accept_prob <- exp(log_accept_prob(logprob, p, logprob_old, p_old))
+  a <- ifelse(accept_prob > 0.5, 1, -1)
+
+  while ((accept_prob ^ a)  > (2 ^ -a) ) {
+    epsilon <- epsilon * 2 ^ a
+    new_step <- leapfrog(list(x = x_old, p = p_old), dag, epsilon)
+    log_accept <- log_accept_prob(new_step$logprob, new_step$p,
+                                  logprob_old, p_old)
+    accept_prob <- exp(log_accept)
+  }
+
+  return (epsilon)
+
+}
+
+#
+# # leapfrog once
+# x <- x_old + epsilon * p
+#
+# # send parameters
+# dag$send_parameters(x)
+# logprob <- dag$log_density()
+# grad <- dag$gradients()
+#
+# # check gradients are finite
+# if (any(!is.finite(grad))) {
+#   reject <- TRUE
+#   break()
+# }
+#
+# p <- p + epsilon * grad
+#
+#
+#
+#
+# def find_reasonable_epsilon(theta0, grad0, logp0, f):
+#   """ Heuristic for choosing an initial value of epsilon """
+# epsilon = 1.
+# r0 = np.random.normal(0., 1., len(theta0))
+#
+# # Figure out what direction we should be moving epsilon.
+# _, rprime, gradprime, logpprime = leapfrog(theta0, r0, grad0, epsilon, f)
+# # brutal! This trick make sure the step is not huge leading to infinite
+# # values of the likelihood. This could also help to make sure theta stays
+# # within the prior domain (if any)
+# k = 1.
+# while np.isinf(logpprime) or np.isinf(gradprime).any():
+#   k *= 0.5
+# _, rprime, _, logpprime = leapfrog(theta0, r0, grad0, epsilon * k, f)
+#
+# epsilon = 0.5 * k * epsilon
+#
+# acceptprob = np.exp(logpprime - logp0 - 0.5 * (np.dot(rprime, rprime.T) - np.dot(r0, r0.T)))
+#
+# a = 2. * float((acceptprob > 0.5)) - 1.
+# # Keep moving epsilon in that direction until acceptprob crosses 0.5.
+# while ( (acceptprob ** a) > (2. ** (-a))):
+#   epsilon = epsilon * (2. ** a)
+# _, rprime, _, logpprime = leapfrog(theta0, r0, grad0, epsilon, f)
+# acceptprob = np.exp(logpprime - logp0 - 0.5 * ( np.dot(rprime, rprime.T) - np.dot(r0, r0.T)))
+#
+# print "find_reasonable_epsilon=", epsilon

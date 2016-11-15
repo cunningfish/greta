@@ -65,8 +65,7 @@ With the model defined, we can start drawing samples of the parameters we care a
 ```{r eval = FALSE, results='hide', message=FALSE}
 draws <- samples(alpha, beta, sigma,
                 method = 'hmc',
-                n_samples = 1000,
-                control = list(epsilon = 0.00001))
+                n_samples = 1000)
 ```
 
 ### Installation

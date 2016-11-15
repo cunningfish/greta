@@ -41,7 +41,7 @@ sigma = lognormal(1, 0.1)
 x = observed(rnorm(10))
 x \%~\% normal(mu, sigma)
 
-draws <- sample(mu, sigma,
+draws <- samples(mu, sigma,
                 n_samples = 100,
                 warmup = 10)
 }
