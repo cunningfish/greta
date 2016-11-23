@@ -1,105 +1,81 @@
 greta: probabilistic modelling with TensorFlow
 ==============================================
 
-`greta` lets users write probabilistic models interactively in native R
-code, then sample from those models efficiently using Hamiltonian Monte
-Carlo. Most of the calculations are performed using TensorFlow, so
-`greta` is particularly fast where the model contains lots of linear
-algebra. `greta` models can also be run across distributed machines or
-on GPUs, just by installing the relevant version of TensorFlow.
+greta lets you write probabilistic models interactively in native R code, then sample from them efficiently using Hamiltonian Monte Carlo.
 
-This package is in the early stages of development. Future releases will
-likely enable fitting models with fast approximate inference schemes,
-different samplers, and more distributions and operations.
+The computational heavy lifting is done by [TensorFlow](https://www.tensorflow.org/), Google's automatic differentiation library. greta is particularly fast where the model contains lots of linear algebra, and greta models can be easily set up to run across CPUs or GPUs, just by installing the relevant version of TensorFlow.
+
+This package is in the early stages of development, so expect it to be buggy for a while. *It is not yet ready for use in serious analysis*.
+
+Releases in the near future will implement more distributions and functions. Later releases will implement [different samplers](http://www.stat.columbia.edu/~gelman/research/published/nuts.pdf) and may enable fitting models with fast [approximate inference schemes](http://andrewgelman.com/2015/02/18/vb-stan-black-box-black-box-variational-bayes/) and running computations across a [distributed network](https://www.tensorflow.org/versions/r0.11/how_tos/distributed/index.html).
 
 Example
 -------
 
-The following example fits a large hierarchical linear regression model
-using `greta`.
+Here's an example of a hierarchical linear regression model applied to the iris data.
 
-First we create a large (10,000 observations, 100 covariates) fake
-dataset:
+``` r
+data(iris)
+library(greta)
 
-    n <- 10000
-    m <- 100
+# define data as observed variables
+y = observed(iris[, 1])
+x = observed(as.matrix(iris[, 2:4]))
 
-    true_alpha <- -3
-    true_beta <- rnorm(m, 1, 2)
-    true_sigma <- 3
+# priors
+sigma = lognormal(0, 10)
+alpha = normal(0, 10)
+mu_beta = normal(0, 10)
+sigma_beta = lognormal(0, 10)
 
-    covariates <- matrix(rnorm(n * m, 0, 10),
-                         nrow = n,
-                         ncol = m)
+# linear model with hierarchical structure on the regression coefficients
+beta = normal(mu_beta, sigma_beta, dim = 3)
+z = alpha + x %*% beta
 
-    true_z <- true_alpha + covariates %*% true_beta
-    response <- rnorm(n, true_z, true_sigma)
+# data likelihood term (y already defined as observed)
+y %~% normal(z, sigma)
+```
 
-Then we load `greta` and define our model
+With the model defined, we can draw samples of the parameters we care about. This takes around 45 seconds on my laptop.
 
-    library(greta)
+``` r
+draws <- samples(alpha, beta, sigma,
+                method = 'hmc',
+                n_samples = 500)
 
-    # define data as observed variables
-    x = observed(covariates)
-    y = observed(response)
+# plot the trace for two of the parameters
+plot(draws[, 1:2],
+     type = 'l',
+     col = grey(0.2, 0.5))
+```
 
-    # priors
-    sigma = lognormal(0, 10)
-    alpha = normal(0, 10)
-    mu_beta <- normal(0, 10)
-    sigma_beta <- lognormal(0, 10)
+![](README_files/figure-markdown_github/unnamed-chunk-2-1.png)
 
-    # linear model with hierarchical structure on the m regression coefficients
-    beta = normal(mu_beta, sigma_beta, dim = m)
-    z = alpha + x %*% beta
+### How fast is it?
 
-    # data likelihood term (y already defined as observed)
-    y %~% normal(z, sigma)
+For small to medium size (a few hundred data points) problems, STAN is likely to be way faster than greta (not accounting for STAN's compilation time). Where the model involves thousands of datapoints and large linear algebra operations (e.g. multiplication of big matrices), greta is likely to be faster than (the current version of) STAN. That's because TensorFlow is heavily optimised for linear algebra operations.
 
-With the model defined, we can start drawing samples of the parameters
-we care about. This runs in around a minute on my laptop. It should go
-much faster if you run it on a GPU!
+For example, while the code above takes 45 seconds to run with the 150-row iris data, if you duplicate the iris data 1,000 times to get a dataset of 150,000 rows, it takes less than 90 seconds to draw the same number of samples. That's not bad. Not bad at all.
 
-    draws <- samples(alpha, beta, sigma,
-                    method = 'hmc',
-                    n_samples = 1000,
-                    control = list(epsilon = 0.00001))
+Those numbers are on a laptop. Since TensorFlow can be run across multiple CPUs or GPUs on lots of different machines, greta models *should* scale really well to massive datasets. When greta is a bit more mature, I'll put together some benchmarks to give a clearer idea of how it compares with other modelling software.
 
 ### Installation
 
-`greta` can be installed from github using the devtools package
+greta can be installed from GitHub using the devtools package
 
-    devtools::install_github('goldingn/greta')
+``` r
+devtools::install_github('goldingn/greta')
+```
 
-however `greta` depends on TensorFlow and the `tensorflow` R package,
-which will need to be succesfully installed before `greta` will work. To
-install `tensorflow`, you will need a working installation of python; to
-have installed the correct version of TensorFlow; and then to install
-tensorflow, pointing to the version of python against which TensorFlow
-was installed. Full installation details can be found [at the
-`tensorflow` site](https://rstudio.github.io/tensorflow/).
+however greta depends on TensorFlow and RStudio's tensorflow R package, which will need to be succesfully installed before greta will work. To install the tensorflow R package, you will need a working installation of python; to have installed the correct version of TensorFlow; and then to point to the correct version of python when installing the tensorflow R package. Full installation details can be found at RStudio's tensorflow [website](https://rstudio.github.io/tensorflow/).
 
 Why 'greta'?
 ------------
 
-There's a recent convention of naming probabilistic modelling software
-after pioneers in the field (e.g.
-[STAN](https://en.wikipedia.org/wiki/Stanislaw_Ulam) and
-[Edward](https://en.wikipedia.org/wiki/George_E._P._Box)).
+There's a recent convention of naming probabilistic modelling software after pioneers in the field (e.g. [STAN](https://en.wikipedia.org/wiki/Stanislaw_Ulam) and [Edward](https://en.wikipedia.org/wiki/George_E._P._Box)).
 
-[Grete Hermann](https://en.wikipedia.org/wiki/Grete_Hermann) wasn't a
-probabilist, but she wrote [the first
-algorithms](http://dl.acm.org/citation.cfm?id=307342&coll=portal&dl=ACM)
-for computer algebra; in the 1920s, well before the first electronic
-computer was built. This work laid the foundations for computer algebra
-libraries (like TensorFlow) that enable modern probabilistic modelling.
+[Grete Hermann](https://en.wikipedia.org/wiki/Grete_Hermann) wasn't a probabilist, but she wrote [the first algorithms](http://dl.acm.org/citation.cfm?id=307342&coll=portal&dl=ACM) for computer algebra; in the 1920s, well before the first electronic computer was built. This work laid the foundations for computer algebra libraries (like TensorFlow) that enable modern probabilistic modelling.
 
-In case that's not enough reason to admire her, Grete Hermann also
-[disproved a popular theorem in quantum
-theory](https://arxiv.org/pdf/0812.3986.pdf) and was part of the German
-resistance against the Nazi regime prior to World War Two.
+In case that's not enough reason to admire her, Grete Hermann also [disproved a popular theorem in quantum theory](https://arxiv.org/pdf/0812.3986.pdf) and was part of the German resistance against the Nazi regime prior to World War Two.
 
-Grete (usually pronounced *Greh*•tuh, like its alternate spelling
-*Greta*) is pretty confusing for most non-German speakers, so I've taken
-the liberty of naming the package greta instead. You can call it
-whatever you like.
+Grete (usually said *Greh*•tuh, like its alternate spelling *Greta*) is pretty confusing for most non-German speakers pronounce, so I've taken the liberty of naming the package greta instead. You can call it whatever you like.
