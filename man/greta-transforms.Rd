@@ -25,8 +25,9 @@ log1pe(x)
 transform to a constrained value}
 }
 \description{
-parameter transformations for greta nodes, which may also be
-  used as inverse link functions
+transformations for greta nodes, which may also be
+  used as inverse link functions. Also see \link{greta-operators} and
+  \link{greta-functions}.
 }
 \details{
 greta does not allow you to state the transformation/link on the
@@ -40,12 +41,12 @@ greta does not allow you to state the transformation/link on the
   The log1pe inverse link function is equivalent to \code{log(1 + exp(x))},
   yielding a positive transformed parameter. Unlike the log transformation,
   this transformation is approximately linear for x > 1. i.e. when \eqn{x >
-  1}, \deqn{y \approx x}
+  1}, \eqn{y \approx x}
 }
 \examples{
  x = normal(1, 3, dim = 10)
 
- # transfromation to the unit interval
+ # transformation to the unit interval
  p1 <- iprobit(x)
  p2 <- ilogit(x)
  p3 <- icloglog(x)
