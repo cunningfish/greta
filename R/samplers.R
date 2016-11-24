@@ -70,20 +70,21 @@ samples <- function (...,
   init <- dag$example_parameters()
   init[] <- rnorm(length(init))
 
-  # get default control options
-  con <- switch(method,
-                hmc = list(Lmin = 10,
-                           Lmax = 20,
-                           epsilon = 0.005),
-                nuts = list())
-
-  # update them with user overrides
-  con[names(control)] <- control
-
   # fetch the algorithm
   method <- switch(method,
                    hmc = hmc,
                    nuts = nuts)
+
+  # get user and default control options
+  control_user <- control
+  control <- eval(as.list(args(method))$control)
+
+  # update existing control with user overrides
+  control[names(control_user)] <- control_user
+
+  # if the user didn't specify an epsilon, take a guess
+  if (! 'epsilon' %in% names(control_user))
+    control$epsilon <- guess_epsilon(dag, init)
 
   # if warmup is required, do that now and update init
   if (warmup > 0) {
@@ -97,12 +98,12 @@ samples <- function (...,
                            n_samples = warmup,
                            thin = thin,
                            verbose = verbose,
-                           guess_epsilon = FALSE,
-                           control = con)
+                           tune_epsilon = TRUE,
+                           control = control)
 
-    # use the last draw of the full parameter vector as the init
+    # use the last draw of the full parameter vector as the init, and grab epsilon
     init <- attr(warmup_draws, 'last_x')
-    con$epsilon <- attr(warmup_draws, 'epsilon')
+    control <- attr(warmup_draws, 'control')
 
     if (verbose)
       message('sampling')
@@ -115,13 +116,14 @@ samples <- function (...,
                   n_samples = n_samples,
                   thin = thin,
                   verbose = verbose,
-                  guess_epsilon = FALSE,
-                  control = con)
+                  tune_epsilon = FALSE,
+                  control = control)
 
   # coerce to data.frame, but keep the sample density
   draws_df <- data.frame(draws)
   attr(draws_df, 'density') <- attr(draws, 'density')
   attr(draws_df, 'last_x') <- attr(draws, 'last_x')
+  attr(draws_df, 'control') <- attr(draws, 'control')
   draws_df
 
 }
@@ -137,7 +139,7 @@ hmc <- function (dag,
                  n_samples,
                  thin,
                  verbose,
-                 guess_epsilon = FALSE,
+                 tune_epsilon = FALSE,
                  control = list(Lmin = 10,
                                 Lmax = 20,
                                 epsilon = 0.005)) {
@@ -153,9 +155,13 @@ hmc <- function (dag,
   grad <- dag$gradients()
   logprob <- dag$log_density()
 
-  if (guess_epsilon)
-    epsilon <- guess_epsilon(dag, init, logprob, grad)
-
+  # initial epsilon tuning parameters
+  if (tune_epsilon) {
+    mu <- log(10 * epsilon)
+    Hbar <- 0
+    delta <- 0.6
+    epsilonbar <- 1
+  }
 
   # set up trace store (grab values of target variables from graph to get
   # dimension and names)
@@ -211,8 +217,6 @@ hmc <- function (dag,
 
       }
 
-      p <- p + epsilon * grad
-
     }
 
     p <- p - 0.5 * epsilon * grad
@@ -224,16 +228,21 @@ hmc <- function (dag,
         message ('proposal rejected due to numerical instability')
 
       x <- x_old
-      logprob <- logprob_old
-      grad <- grad_old
 
     } else {
 
       # otherwise do the Metropolis accept/reject step
 
+      logprob <- new_step$logprob
+      p <- new_step$p
+
       # acceptance ratio
-      log_accept_ratio  <- log_accept_prob(logprob, p, logprob_old, p_old)
+      log_accept_ratio  <- accept_prob_fun(logprob, p, logprob_old, p_old, log = TRUE)
       log_u = log(runif(1))
+
+      # store the raw density ratio
+      alpha <- min(1, exp(log_accept_ratio))
+
 
       if (log_u < log_accept_ratio) {
 
@@ -246,6 +255,7 @@ hmc <- function (dag,
         # on rejection, reset all the parameters and push old parameters to the
         # graph for the trace
         x <- x_old
+
         logprob <- logprob_old
         grad <- grad_old
 
@@ -264,14 +274,27 @@ hmc <- function (dag,
     if (verbose)
       setTxtProgressBar(pb, i)
 
+    # optionally tune epsilon
+    if (tune_epsilon) {
+      eta <- 1 / (i + 10)
+      Hbar <- (1 - eta) * Hbar + eta * (delta - alpha)
+      epsilon <- exp(mu - sqrt(i) / 0.05 * Hbar)
+      eta <- i ^ -0.75
+      epsilonbar <- exp((1 - eta) * log(epsilonbar) + eta * log(epsilon))
+    }
+
   }
 
   if (verbose)
     close(pb)
 
+  # store the tuned epsilon
+  if (tune_epsilon)
+    control$epsilon <- epsilonbar
+
   attr(trace, 'density') <- -ljd
   attr(trace, 'last_x') <- x
-  attr(trace, 'epsilon') <- epsilon
+  attr(trace, 'control') <- control
   trace
 
 }
@@ -305,20 +328,30 @@ leapfrog <- function(list, dag, epsilon) {
 }
 
 # log acceptance probability
-log_accept_prob <- function(logprob, p, logprob_old, p_old) {
+accept_prob_fun <- function(logprob, p, logprob_old, p_old, log = FALSE) {
 
   # inner products
   p_prod <- (t(p) %*% p)[1, 1]
   p_prod_old <- (t(p_old) %*% p_old)[1, 1]
 
   # log ratio
-  logprob - 0.5 * p_prod - logprob_old + 0.5 * p_prod_old
+  res <- (logprob - 0.5 * p_prod) - (logprob_old - 0.5 * p_prod_old)
+
+  # unlog if required
+  if (!log)
+    res <- exp(res)
+
+  res
 }
 
 # make a reasonable guess at epsilon from the starting location
-guess_epsilon <- function(dag, x_old, logprob_old, grad_old) {
+guess_epsilon <- function(dag, x_old) {
 
-  # initial conditions
+  dag$send_parameters(x_old)
+  grad_old <- dag$gradients()
+  logprob_old <- dag$log_density()
+
+  # initial conditions (start with random inertia)
   epsilon <- 1
   p_old <- rnorm(length(x_old))
 
@@ -326,7 +359,7 @@ guess_epsilon <- function(dag, x_old, logprob_old, grad_old) {
   new_step <- leapfrog(list(x = x_old, p = p_old),
                  dag, epsilon)
 
-  # see how far to step in that direction
+  # if the initial epsilon leads to numerical errors, row back until it's stable
   k <- 1
   while(!is.finite(new_step$logprob) | !all(is.finite(new_step$grad))) {
     k <- k * 0.5
@@ -336,20 +369,15 @@ guess_epsilon <- function(dag, x_old, logprob_old, grad_old) {
   # shrink epsilon to halfway there
   epsilon <- epsilon * 0.5 * k
 
-  # get required elements
-  logprob <- new_step$logprob
-  p <- new_step$p
-
   # now, get acceptance probability and direction toward 0.5 acceptance
-  accept_prob <- exp(log_accept_prob(logprob, p, logprob_old, p_old))
+  accept_prob <- accept_prob_fun(new_step$logprob, new_step$p, logprob_old, p_old)
   a <- ifelse(accept_prob > 0.5, 1, -1)
 
   while ((accept_prob ^ a)  > (2 ^ -a) ) {
     epsilon <- epsilon * 2 ^ a
     new_step <- leapfrog(list(x = x_old, p = p_old), dag, epsilon)
-    log_accept <- log_accept_prob(new_step$logprob, new_step$p,
-                                  logprob_old, p_old)
-    accept_prob <- exp(log_accept)
+    accept_prob <- accept_prob_fun(new_step$logprob, new_step$p,
+                                   logprob_old, p_old)
   }
 
   return (epsilon)
@@ -399,7 +427,7 @@ guess_epsilon <- function(dag, x_old, logprob_old, grad_old) {
 # # Keep moving epsilon in that direction until acceptprob crosses 0.5.
 # while ( (acceptprob ** a) > (2. ** (-a))):
 #   epsilon = epsilon * (2. ** a)
-# _, rprime, _, logpprime = leapfrog(theta0, r0, grad0, epsilon, f)
-# acceptprob = np.exp(logpprime - logp0 - 0.5 * ( np.dot(rprime, rprime.T) - np.dot(r0, r0.T)))
+#   _, rprime, _, logpprime = leapfrog(theta0, r0, grad0, epsilon, f)
+#   acceptprob = np.exp(logpprime - logp0 - 0.5 * ( np.dot(rprime, rprime.T) - np.dot(r0, r0.T)))
 #
 # print "find_reasonable_epsilon=", epsilon
