@@ -157,10 +157,21 @@ hmc <- function (dag,
 
   # initial epsilon tuning parameters
   if (tune_epsilon) {
-    mu <- log(10 * epsilon)
-    Hbar <- 0
-    delta <- 0.6
-    epsilonbar <- 1
+
+    # in theory this is optimal for HMC
+    target_acceptance <- 0.651
+
+    # keep track of progress
+    epsilon_trace <- rep(NA, n_samples)
+
+    # how many samples to look back when calculating acceptance probabilities
+    # for tuning
+    accept_group <- 100
+
+    # decay curve for learning
+    gamma <- 0.1
+    kappa <- 0.75
+
   }
 
   # set up trace store (grab values of target variables from graph to get
@@ -174,6 +185,9 @@ hmc <- function (dag,
 
   # set up log joint density store
   ljd <- rep(NA, n_samples)
+
+  # track acceptance
+  accept_trace <- rep(0, n_samples)
 
   # get free parameter dimension
   npar <- length(x)
@@ -240,15 +254,11 @@ hmc <- function (dag,
       log_accept_ratio  <- accept_prob_fun(logprob, p, logprob_old, p_old, log = TRUE)
       log_u = log(runif(1))
 
-      # store the raw density ratio
-      alpha <- min(1, exp(log_accept_ratio))
-
-
       if (log_u < log_accept_ratio) {
 
-        # on acceptance, iterate the counter and leave the parameters in the dag
+        # on acceptance, store the success and leave the parameters in the dag
         # to be put in the trace
-        accept_count <- accept_count + 1
+        accept_trace[i] <- 1
 
       } else {
 
@@ -276,21 +286,42 @@ hmc <- function (dag,
 
     # optionally tune epsilon
     if (tune_epsilon) {
-      eta <- 1 / (i + 10)
-      Hbar <- (1 - eta) * Hbar + eta * (delta - alpha)
-      epsilon <- exp(mu - sqrt(i) / 0.05 * Hbar)
-      eta <- i ^ -0.75
-      epsilonbar <- exp((1 - eta) * log(epsilonbar) + eta * log(epsilon))
+
+      # acceptance rate over the last accept_group runs
+      start <- max(1, i - accept_group)
+      end <- i
+      accept_rate <- mean(accept_trace[start:end], na.rm = TRUE)
+
+      # decrease the adaptation rate as we go
+      adapt_rate <- min(1, gamma * i ^ (-kappa))
+
+      # shift epsilon in the right direction, making sure it never goes negative
+      epsilon <- epsilon + pmax(-(epsilon + sqrt(.Machine$double.eps)),
+                                adapt_rate * (accept_rate - target_acceptance))
+
+      # keep track of epsilon
+      epsilon_trace[i] <- epsilon
+
     }
 
   }
 
-  if (verbose)
+  if (verbose) {
+
     close(pb)
 
-  # store the tuned epsilon
-  if (tune_epsilon)
-    control$epsilon <- epsilonbar
+    acc <- mean(accept_trace)
+    message(sprintf('acceptance rate: %s',
+                    prettyNum(round(acc, 3))))
+
+  }
+
+  # store the tuned epsilon as the mean of the last half
+  if (tune_epsilon) {
+    start <- floor(n_samples/2)
+    end <- n_samples
+    control$epsilon <- mean(epsilon_trace[start:end], na.rm = TRUE)
+  }
 
   attr(trace, 'density') <- -ljd
   attr(trace, 'last_x') <- x
