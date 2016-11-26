@@ -75,7 +75,7 @@ hmc <- function (dag,
     for (l in seq_len(n_steps)) {
 
       # do a step
-      new_step <- leapfrog(list(x = x_old, p = p), dag, epsilon)
+      new_step <- leapfrog(list(x = x, p = p), dag, epsilon)
 
       # if it went awry, quit now
       if (is.null(new_step)) {
