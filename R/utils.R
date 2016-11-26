@@ -104,3 +104,12 @@ relist_tf <- function (x, list_template) {
   list
 
 }
+
+# unpack named list, to assign elements to calling environment. This is only
+# necessary because list2env was being a dick when used in the package
+unpack <- function (x) {
+  mapply(assign,
+         names(x),
+         x,
+         MoreArgs = list(envir = parent.frame()))
+}

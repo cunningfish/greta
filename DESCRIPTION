@@ -36,7 +36,9 @@ Collate:
     'functions.R'
     'transformations.R'
     'dag_class.R'
-    'samplers.R'
+    'samples.R'
+    'hmc_sampler.R'
+    'nuts_sampler.R'
 Imports:
     R6,
     tensorflow

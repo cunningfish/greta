@@ -17,7 +17,7 @@ hmc <- function (dag,
                                                     kappa = 0.75))) {
 
   # unpack control options
-  list2env(control, environment())
+  unpack(control)
 
   # set initial location, log joint density and gradients
   x <- init
@@ -29,7 +29,7 @@ hmc <- function (dag,
   if (tune_epsilon) {
 
     # unpack tuning options
-    list2env(tune_control, environment())
+    unpack(tune_control)
 
     # keep track of progress
     epsilon_trace <- rep(NA, n_samples)
