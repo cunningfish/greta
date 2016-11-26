@@ -5,25 +5,30 @@
 \alias{samples}
 \title{sample model variables}
 \usage{
-samples(..., method = c("hmc", "nuts"), n_samples = 1000, thin = 1,
-  warmup = 100, verbose = TRUE, control = list())
+samples(..., n_samples = 1000, warmup = floor(n_samples/2), thin = 1,
+  method = c("hmc", "nuts"), tune_epsilon = TRUE, verbose = TRUE,
+  control = list())
 }
 \arguments{
 \item{...}{nodes to sample values from, probably parameters of a
 model. Observed nodes cannot be sampled from.}
 
-\item{method}{the method used to sample values. Currently only \code{hmc} is
-implemented}
-
 \item{n_samples}{the number of samples to draw (after any warm-up, but before
 thinning)}
-
-\item{thin}{the thinning rate; every \code{thin} samples is retained, the
-rest are discarded}
 
 \item{warmup}{the number of samples to spend warming up the sampler. During
 this phase the sampler moves toward the highest density area and may tune
 sampler hyperparameters.}
+
+\item{thin}{the thinning rate; every \code{thin} samples is retained, the
+rest are discarded}
+
+\item{method}{the method used to sample values. Currently only \code{hmc} is
+implemented}
+
+\item{tune_epsilon}{whether to tune the step size parameter \code{epsilon}
+during the warmup phase. If \code{FALSE}, either a user-provided epsilon is
+used, or a a reasonable guess is made}
 
 \item{verbose}{whether to print progress information to the console}
 

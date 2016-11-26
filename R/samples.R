@@ -4,15 +4,18 @@
 #'   variables of interest
 #' @param ... nodes to sample values from, probably parameters of a
 #'   model. Observed nodes cannot be sampled from.
-#' @param method the method used to sample values. Currently only \code{hmc} is
-#'   implemented
 #' @param n_samples the number of samples to draw (after any warm-up, but before
 #'   thinning)
-#' @param thin the thinning rate; every \code{thin} samples is retained, the
-#'   rest are discarded
 #' @param warmup the number of samples to spend warming up the sampler. During
 #'   this phase the sampler moves toward the highest density area and may tune
 #'   sampler hyperparameters.
+#' @param thin the thinning rate; every \code{thin} samples is retained, the
+#'   rest are discarded
+#' @param method the method used to sample values. Currently only \code{hmc} is
+#'   implemented
+#' @param tune_epsilon whether to tune the step size parameter \code{epsilon}
+#'   during the warmup phase. If \code{FALSE}, either a user-provided epsilon is
+#'   used, or a a reasonable guess is made
 #' @param verbose whether to print progress information to the console
 #' @param control an optional named list of hyperparameters and options to
 #'   control behaviour of the sampler
@@ -28,10 +31,11 @@
 #'                 n_samples = 100,
 #'                 warmup = 10)
 samples <- function (...,
-                    method = c('hmc', 'nuts'),
                     n_samples = 1000,
+                    warmup = floor(n_samples / 2),
                     thin = 1,
-                    warmup = 100,
+                    method = c('hmc', 'nuts'),
+                    tune_epsilon = TRUE,
                     verbose = TRUE,
                     control = list()) {
 
@@ -98,7 +102,7 @@ samples <- function (...,
                            n_samples = warmup,
                            thin = thin,
                            verbose = verbose,
-                           tune_epsilon = TRUE,
+                           tune_epsilon = tune_epsilon,
                            control = control)
 
     # use the last draw of the full parameter vector as the init, and grab epsilon
