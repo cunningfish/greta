@@ -10,7 +10,6 @@ nuts6 <- function (dag,
                   verbose,
                   tune_epsilon = FALSE,
                   control = list(max_doublings = 4,
-                                 target_acceptance = 0.5,
                                  epsilon = 0.05,
                                  tune_control = list(target_acceptance = 0.5,
                                                      accept_group = 100,
@@ -27,9 +26,6 @@ nuts6 <- function (dag,
 
   # set initial location, log joint density and gradients
   x <- init
-  dag$send_parameters(x)
-  grad <- dag$gradients()
-  logprob <- dag$log_density()
 
   # initial epsilon tuning parameters
   if (tune_epsilon) {
@@ -49,11 +45,11 @@ nuts6 <- function (dag,
 
   # set up trace store (grab values of target variables from graph to get
   # dimension and names)
+  dag$send_parameters(x)
   init_trace <- dag$trace_values()
-  n_target <- length(init_trace)
   trace <- matrix(NA,
                   nrow = n_samples %/% thin,
-                  ncol = n_target)
+                  ncol = length(init_trace))
   colnames(trace) <- names(init_trace)
 
   # set up log joint density store
@@ -74,12 +70,11 @@ nuts6 <- function (dag,
 
     # copy old state
     x_minus <- x_plus <- x_old <- x
-    logprob_old <- logprob
-    grad_old <- grad
     p_minus <- p_plus <- p_old <- p <- rnorm(npar)
 
     # draw slice variable
-    u <- sample_u(x = x, p = p, dag = dag)
+    u_max <- exp(calc_H(x, p, dag))
+    u <- runif(1, 0, u_max)
 
     # counters
     j <- 0
@@ -178,8 +173,8 @@ nuts6 <- function (dag,
     } else {
 
       # otherwise, jitter epsilon
-
       epsilon <- epsilon_mean * rnorm(1, 0.9, 1.1)
+
     }
 
     # store the parameter values
@@ -210,7 +205,6 @@ nuts6 <- function (dag,
     control$epsilon <- epsilon_bar_trace[n_samples + 1]
   }
 
-
   attr(trace, 'density') <- -ljd
   attr(trace, 'last_x') <- x
   attr(trace, 'control') <- control
@@ -218,15 +212,8 @@ nuts6 <- function (dag,
 
 }
 
-sample_u <- function(x, p, dag, send = TRUE) {
-  max <- exp(calc_H(x, p, dag, send = TRUE))
-  runif(1, 0, max)
-}
-
-calc_H <- function(x, p, dag, send = TRUE) {
-  # optionally re-send the parameters
-  if (send)
-    dag$send_parameters(x)
+calc_H <- function(x, p, dag) {
+  dag$send_parameters(x)
   dag$log_density() - 0.5 * sum(p ^ 2)
 }
 
@@ -263,7 +250,7 @@ build_tree <- function(x,
     p <- p + 0.5 * epsilon * grad
 
     # check the trajectory
-    H <- calc_H(x, p, dag, send = FALSE)
+    H <- calc_H(x, p, dag)
     continue <- (H - log(u) + delta_max) > 0
 
     # switch this to premature reject!
@@ -274,7 +261,7 @@ build_tree <- function(x,
     n <- ifelse(log(u) <= H, 1, 0)
 
     # get acceptance probability
-    H_diff <- calc_H(x, p, dag, send = FALSE) - calc_H(x_old, p_old, dag)
+    H_diff <- calc_H(x, p, dag) - calc_H(x_old, p_old, dag)
     alpha <- min(1, exp(H_diff))
 
     # combine step info

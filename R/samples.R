@@ -31,13 +31,13 @@
 #'                 n_samples = 100,
 #'                 warmup = 10)
 samples <- function (...,
-                    n_samples = 1000,
-                    warmup = floor(n_samples / 2),
-                    thin = 1,
-                    method = c('hmc', 'nuts'),
-                    tune_epsilon = TRUE,
-                    verbose = TRUE,
-                    control = list()) {
+                     n_samples = 1000,
+                     warmup = floor(n_samples / 2),
+                     thin = 1,
+                     method = c('hmc', 'nuts'),
+                     tune_epsilon = TRUE,
+                     verbose = TRUE,
+                     control = list()) {
 
   method <- match.arg(method)
 
@@ -148,7 +148,7 @@ guess_epsilon <- function(dag, x_old) {
 
   # do a leapfrog step
   new_step <- leapfrog(list(x = x_old, p = p_old),
-                 dag, epsilon)
+                       dag, epsilon)
 
   # if the initial epsilon leads to numerical errors, row back until it's stable
   k <- 1
