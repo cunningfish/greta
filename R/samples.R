@@ -1,25 +1,55 @@
 #' @name greta-samplers
+#'
 #' @title sample model variables
+#'
 #' @description After defining a greta model in R, draw samples of the random
 #'   variables of interest
+#'
 #' @param ... nodes to sample values from, probably parameters of a
 #'   model. Observed nodes cannot be sampled from.
+#'
 #' @param n_samples the number of samples to draw (after any warm-up, but before
 #'   thinning)
+#'
 #' @param warmup the number of samples to spend warming up the sampler. During
 #'   this phase the sampler moves toward the highest density area and may tune
 #'   sampler hyperparameters.
+#'
 #' @param thin the thinning rate; every \code{thin} samples is retained, the
 #'   rest are discarded
+#'
 #' @param method the method used to sample values. Currently only \code{hmc} is
 #'   implemented
-#' @param tune_epsilon whether to tune the step size parameter \code{epsilon}
-#'   during the warmup phase. If \code{FALSE}, either a user-provided epsilon is
-#'   used, or a a reasonable guess is made
+#'
+#' @param tune_epsilon,estimate_mass_matrix whether to tune the step size
+#'   parameter 'epsilon' and/or estimate the mass matrix (approximate posterior
+#'   covariance matrix) during the warmup phase. If \code{FALSE}, either a
+#'   user-provided value is used or (if a value is not provided) a reasonable
+#'   guess is made. See details.
+#'
+#' @param  whether to  during the warmup phase. If \code{FALSE},
+#'   either the cholesky distribution of a mass matrix is provided by the user
+#'   (as an element \code{mass_cholseky} in the list passed to \code{control})
+#'   or the identity matrix is used. If
+#'
 #' @param verbose whether to print progress information to the console
+#'
 #' @param control an optional named list of hyperparameters and options to
 #'   control behaviour of the sampler
+#'
+#' @details epsilon can be manually specified by passing a positive scalar as an
+#'   element named \code{epsilon} in the list passed to \code{control}. If
+#'   \code{tune_epsilon = TRUE}, this value is used as a starting point in the
+#'   tuning algorithm.
+#'
+#'   Similarly, the mass matrix can be specified by passing the Cholesky
+#'   decomposition of a covariance matrix as an element named
+#'   \code{mass_cholesky} in the \code{control} list. If not provided, the
+#'   matrix will either be estimated (if \code{estimate_mass_matrix = TRUE}) or
+#'   set to the identity matrix.
+#'
 #' @export
+#'
 #' @examples
 #' # define a simple model
 #' mu = free()
@@ -36,6 +66,7 @@ samples <- function (...,
                      thin = 1,
                      method = c('hmc', 'nuts'),
                      tune_epsilon = TRUE,
+                     estimate_mass_matrix = TRUE,
                      verbose = TRUE,
                      control = list()) {
 
@@ -90,6 +121,11 @@ samples <- function (...,
   if (! 'epsilon' %in% names(control_user))
     control$epsilon <- guess_epsilon(dag, init)
 
+  # if the user didn't provide the Cholesky decomposition of the mass matrix,
+  # use the identity
+  if (! 'mass_cholesky' %in% names(control_user))
+    control$mass_cholesky <- diag(length(init))
+
   # if warmup is required, do that now and update init
   if (warmup > 0) {
 
@@ -103,6 +139,7 @@ samples <- function (...,
                            thin = thin,
                            verbose = verbose,
                            tune_epsilon = tune_epsilon,
+                           estimate_mass_matrix = estimate_mass_matrix,
                            control = control)
 
     # use the last draw of the full parameter vector as the init, and grab epsilon
@@ -121,6 +158,7 @@ samples <- function (...,
                   thin = thin,
                   verbose = verbose,
                   tune_epsilon = FALSE,
+                  estimate_mass_matrix = FALSE,
                   control = control)
 
   # coerce to data.frame, but keep the sample density

@@ -9,8 +9,10 @@ nuts6 <- function (dag,
                   thin,
                   verbose,
                   tune_epsilon = FALSE,
+                  estimate_mass_matrix = FALSE,
                   control = list(max_doublings = 4,
                                  epsilon = 0.05,
+                                 mass_cholesky = NULL,
                                  tune_control = list(target_acceptance = 0.5,
                                                      accept_group = 100,
                                                      t0 = 10,
@@ -43,9 +45,22 @@ nuts6 <- function (dag,
 
   }
 
+  # if we're estimating the mass matrix
+  if (estimate_mass_matrix) {
+
+    # set up to trace the second half of the values
+    trace_x <- matrix(NA,
+                      nrow = floor(n_samples / 2),
+                      ncol = length(x))
+
+  }
+
+  # make sure to untransform by the provided mass matrix before estimating!
+
   # set up trace store (grab values of target variables from graph to get
   # dimension and names)
-  dag$send_parameters(x)
+  x_projected <- (mass_cholesky %*% x)[, 1]
+  dag$send_parameters(x_projected)
   init_trace <- dag$trace_values()
   trace <- matrix(NA,
                   nrow = n_samples %/% thin,
@@ -73,7 +88,7 @@ nuts6 <- function (dag,
     p_minus <- p_plus <- p_old <- p <- rnorm(npar)
 
     # draw slice variable
-    u_max <- exp(calc_H(x, p, dag))
+    u_max <- exp(calc_H(x, p, dag, mass_cholesky))
     u <- runif(1, 0, u_max)
 
     # counters
@@ -97,6 +112,7 @@ nuts6 <- function (dag,
                                epsilon = epsilon,
                                x_old = x_old,
                                p_old = p_old,
+                               mass_cholesky = mass_cholesky,
                                dag = dag)
 
         x_plus <- new_step$x_plus
@@ -113,6 +129,7 @@ nuts6 <- function (dag,
                                epsilon = epsilon,
                                x_old = x_old,
                                p_old = p_old,
+                               mass_cholesky = mass_cholesky,
                                dag = dag)
 
         x_minus <- new_step$x_minus
@@ -177,6 +194,13 @@ nuts6 <- function (dag,
 
     }
 
+    # if we're estimating the mass matrix, and in the second half of the chain,
+    # store the trace
+    if (estimate_mass_matrix & i > floor(n_samples / 2)) {
+      idx <- i - floor(n_samples / 2)
+      trace_x[idx, ] <- x
+    }
+
     # store the parameter values
     if (i %% thin == 0) {
       dag$send_parameters(x)
@@ -201,8 +225,28 @@ nuts6 <- function (dag,
   }
 
   # store the tuned epsilon
-  if (tune_epsilon) {
+  if (tune_epsilon)
     control$epsilon <- epsilon_bar_trace[n_samples + 1]
+
+  # get the Cholesky of the regularised, estimated mass matrix
+  if (estimate_mass_matrix) {
+
+    # back-transform the trace using the current mass matrix
+    trace_x <- t(solve(mass_cholesky, t(trace_x)))
+
+    # get the covariance
+    covar <- cov(trace_x)
+
+    # regularize it
+    n_est = nrow(trace_x)
+    mass_matrix_new <- (n_est / (n_est + 5)) *
+      covar + 1e-3 * (5 / (n_est + 5)) * diag(length(x))
+
+    # cholesky it
+    mass_cholesky_new <- chol(mass_matrix_new)
+
+    # store it
+    control$mass_cholesky <- mass_cholesky_new
   }
 
   attr(trace, 'density') <- -ljd
@@ -212,8 +256,9 @@ nuts6 <- function (dag,
 
 }
 
-calc_H <- function(x, p, dag) {
-  dag$send_parameters(x)
+calc_H <- function(x, p, dag, mass_cholesky) {
+  x_projected <- (mass_cholesky %*% x)[, 1]
+  dag$send_parameters(x_projected)
   dag$log_density() - 0.5 * sum(p ^ 2)
 }
 
@@ -234,13 +279,15 @@ build_tree <- function(x,
                        x_old,
                        p_old,
                        dag,
+                       mass_cholesky,
                        delta_max=1000) {
 
   # if at root of tree
   if (j == 0) {
 
     # send parameters once, and get gradients
-    dag$send_parameters(x)
+    x_projected <- (mass_cholesky %*% x)[, 1]
+    dag$send_parameters(x_projected)
     grad <- dag$gradients()
 
     # take one step in direction v
@@ -250,7 +297,7 @@ build_tree <- function(x,
     p <- p + 0.5 * epsilon * grad
 
     # check the trajectory
-    H <- calc_H(x, p, dag)
+    H <- calc_H(x, p, dag, mass_cholesky)
     continue <- (H - log(u) + delta_max) > 0
 
     # switch this to premature reject!
@@ -261,7 +308,8 @@ build_tree <- function(x,
     n <- ifelse(log(u) <= H, 1, 0)
 
     # get acceptance probability
-    H_diff <- calc_H(x, p, dag) - calc_H(x_old, p_old, dag)
+    H_diff <- calc_H(x, p, dag, mass_cholesky) -
+      calc_H(x_old, p_old, dag, mass_cholesky)
     alpha <- min(1, exp(H_diff))
 
     # combine step info
@@ -287,6 +335,7 @@ build_tree <- function(x,
                              epsilon = epsilon,
                              x_old = x_old,
                              p_old = p_old,
+                             mass_cholesky = mass_cholesky,
                              dag = dag)
 
     # unpack the results into this environment
@@ -308,6 +357,7 @@ build_tree <- function(x,
                                   epsilon = epsilon,
                                   x_old = x_old,
                                   p_old = p_old,
+                                  mass_cholesky = mass_cholesky,
                                   dag = dag)
 
         x_minus <- second_tree$x_minus
@@ -323,6 +373,7 @@ build_tree <- function(x,
                                   epsilon = epsilon,
                                   x_old = x_old,
                                   p_old = p_old,
+                                  mass_cholesky = mass_cholesky,
                                   dag = dag)
 
         x_plus <- second_tree$x_plus

@@ -6,8 +6,8 @@
 \title{sample model variables}
 \usage{
 samples(..., n_samples = 1000, warmup = floor(n_samples/2), thin = 1,
-  method = c("hmc", "nuts"), tune_epsilon = TRUE, verbose = TRUE,
-  control = list())
+  method = c("hmc", "nuts"), tune_epsilon = TRUE,
+  estimate_mass_matrix = TRUE, verbose = TRUE, control = list())
 }
 \arguments{
 \item{...}{nodes to sample values from, probably parameters of a
@@ -26,18 +26,37 @@ rest are discarded}
 \item{method}{the method used to sample values. Currently only \code{hmc} is
 implemented}
 
-\item{tune_epsilon}{whether to tune the step size parameter \code{epsilon}
-during the warmup phase. If \code{FALSE}, either a user-provided epsilon is
-used, or a a reasonable guess is made}
+\item{tune_epsilon, estimate_mass_matrix}{whether to tune the step size
+parameter 'epsilon' and/or estimate the mass matrix (approximate posterior
+covariance matrix) during the warmup phase. If \code{FALSE}, either a
+user-provided value is used or (if a value is not provided) a reasonable
+guess is made. See details.}
 
 \item{verbose}{whether to print progress information to the console}
 
 \item{control}{an optional named list of hyperparameters and options to
 control behaviour of the sampler}
+
+\item{whether}{to  during the warmup phase. If \code{FALSE},
+either the cholesky distribution of a mass matrix is provided by the user
+(as an element \code{mass_cholseky} in the list passed to \code{control})
+or the identity matrix is used. If}
 }
 \description{
 After defining a greta model in R, draw samples of the random
   variables of interest
+}
+\details{
+epsilon can be manually specified by passing a positive scalar as an
+  element named \code{epsilon} in the list passed to \code{control}. If
+  \code{tune_epsilon = TRUE}, this value is used as a starting point in the
+  tuning algorithm.
+
+  Similarly, the mass matrix can be specified by passing the Cholesky
+  decomposition of a covariance matrix as an element named
+  \code{mass_cholesky} in the \code{control} list. If not provided, the
+  matrix will either be estimated (if \code{estimate_mass_matrix = TRUE}) or
+  set to the identity matrix.
 }
 \examples{
 # define a simple model
