@@ -113,3 +113,32 @@ unpack <- function (x) {
          x,
          MoreArgs = list(envir = parent.frame()))
 }
+
+# add jitter (small diagonal entries) to a covariance matrix to try and make it
+# invertible
+jitchol <- function (A, maxtries = 5, verbose = FALSE) {
+  L <- tryCatch(chol(A), error = function(x) return(NULL))
+  if (is.null(L)) {
+    if (any(diag(A) < 0)) {
+      stop("A Cholesky factorisation could not be found as the matrix is not positive-definite - it has negative diagonal elements")
+    }
+    jitter <- mean(diag(A)) * 1e-06
+    attempt <- 0
+    while (is.null(L) & attempt <= maxtries) {
+      attempt <- attempt + 1
+      jitter <- jitter * 10
+      L <- tryCatch(chol(A + diag(nrow(A)) * jitter), error = function(x) return(NULL))
+    }
+    if (is.matrix(L)) {
+      if (verbose) {
+        warning(paste0("A Cholesky factorisation could not initially be computed, so ",
+                       prettyNum(jitter), " was added to the diagonal."))
+      }
+    }
+    else {
+      stop(paste0("A Cholesky factorisation could not be computed, even after adding ",
+                  prettyNum(jitter), " to the diagonal."))
+    }
+  }
+  return(L)
+}

@@ -48,10 +48,9 @@ nuts6 <- function (dag,
   # if we're estimating the mass matrix
   if (estimate_mass_matrix) {
 
-    # set up to trace the second half of the values
-    trace_x <- matrix(NA,
-                      nrow = floor(n_samples / 2),
-                      ncol = length(x))
+    # determin adaptation window and set up covariance accumulator
+    window <- adapt_window(n_samples, init_prop, term_prop)
+    mass_state <- init_mass_state(length(x))
 
   }
 
@@ -59,7 +58,7 @@ nuts6 <- function (dag,
 
   # set up trace store (grab values of target variables from graph to get
   # dimension and names)
-  x_projected <- (mass_cholesky %*% x)[, 1]
+  x_projected <- project_x(x, mass_cholesky)
   dag$send_parameters(x_projected)
   init_trace <- dag$trace_values()
   trace <- matrix(NA,
@@ -69,9 +68,6 @@ nuts6 <- function (dag,
 
   # set up log joint density store
   ljd <- rep(NA, n_samples)
-
-  # track acceptance
-  accept_trace <- rep(0, n_samples)
 
   # get free parameter dimension
   npar <- length(x)
@@ -89,7 +85,7 @@ nuts6 <- function (dag,
 
     # draw slice variable
     u_max <- exp(calc_H(x, p, dag, mass_cholesky))
-    u <- runif(1, 0, u_max)
+    u <- runif(1, 0, max(u_max, 0))
 
     # counters
     j <- 0
@@ -196,14 +192,23 @@ nuts6 <- function (dag,
 
     # if we're estimating the mass matrix, and in the second half of the chain,
     # store the trace
-    if (estimate_mass_matrix & i > floor(n_samples / 2)) {
-      idx <- i - floor(n_samples / 2)
-      trace_x[idx, ] <- x
+    if (estimate_mass_matrix) {
+      if (i %in% window) {
+
+        # update the covariance matrix state
+        x_projected <- project_x(x, mass_cholesky)
+        mass_state <- update_mass_state(x_projected, mass_state)
+
+        # if there at least 2 samples are available, get the updated Cholesky
+        if ((i - window[1] - 1) > 1) {
+          mass_cholesky <- get_mass_cholesky(mass_state)
+        }
+      }
     }
 
     # store the parameter values
     if (i %% thin == 0) {
-      dag$send_parameters(x)
+      dag$send_parameters(project_x(x, mass_cholesky))
       trace[i / thin, ] <- dag$trace_values()
       ljd[i / thin] <- dag$log_density()
     }
@@ -214,40 +219,16 @@ nuts6 <- function (dag,
 
   }
 
-  if (verbose) {
-
+  if (verbose)
     close(pb)
-
-    acc <- mean(accept_trace)
-    message(sprintf('acceptance rate: %s',
-                    prettyNum(round(acc, 3))))
-
-  }
 
   # store the tuned epsilon
   if (tune_epsilon)
     control$epsilon <- epsilon_bar_trace[n_samples + 1]
 
   # get the Cholesky of the regularised, estimated mass matrix
-  if (estimate_mass_matrix) {
-
-    # back-transform the trace using the current mass matrix
-    trace_x <- t(solve(mass_cholesky, t(trace_x)))
-
-    # get the covariance
-    covar <- cov(trace_x)
-
-    # regularize it
-    n_est = nrow(trace_x)
-    mass_matrix_new <- (n_est / (n_est + 5)) *
-      covar + 1e-3 * (5 / (n_est + 5)) * diag(length(x))
-
-    # cholesky it
-    mass_cholesky_new <- chol(mass_matrix_new)
-
-    # store it
-    control$mass_cholesky <- mass_cholesky_new
-  }
+  if (estimate_mass_matrix)
+    control$mass_cholesky <- mass_cholesky
 
   attr(trace, 'density') <- -ljd
   attr(trace, 'last_x') <- x
@@ -257,7 +238,7 @@ nuts6 <- function (dag,
 }
 
 calc_H <- function(x, p, dag, mass_cholesky) {
-  x_projected <- (mass_cholesky %*% x)[, 1]
+  x_projected <- project_x(x, mass_cholesky)
   dag$send_parameters(x_projected)
   dag$log_density() - 0.5 * sum(p ^ 2)
 }
@@ -285,16 +266,11 @@ build_tree <- function(x,
   # if at root of tree
   if (j == 0) {
 
-    # send parameters once, and get gradients
-    x_projected <- (mass_cholesky %*% x)[, 1]
-    dag$send_parameters(x_projected)
-    grad <- dag$gradients()
-
     # take one step in direction v
     epsilon <- v * epsilon
-    p <- p + 0.5 * epsilon * grad
+    p <- p + 0.5 * epsilon * gradients(x, dag, mass_cholesky)
     x <- x + epsilon * p
-    p <- p + 0.5 * epsilon * grad
+    p <- p + 0.5 * epsilon * gradients(x, dag, mass_cholesky)
 
     # check the trajectory
     H <- calc_H(x, p, dag, mass_cholesky)
@@ -416,5 +392,67 @@ build_tree <- function(x,
   tree
 
 }
+
+# initialise the Welford state of the mass matrix
+init_mass_state <- function (n) {
+
+  list(n = 0,
+       m = rep(0, n),
+       m2 = matrix(0, n, n),
+       eye = diag(n))
+
+}
+
+# use the welford accumlator to efficiently update the covariance matrix
+update_mass_state <- function (x, state) {
+
+  # update state
+  state$n <- state$n + 1
+  delta <- x - state$m
+  state$m <- state$m + delta / state$n
+  state$m2 <- state$m2 + (x - state$m) %*% t(delta)
+
+  state
+
+}
+
+# get the Cholesky decomposition of the mass matrix from the Welford state
+# parameters
+get_mass_cholesky <- function (state) {
+
+  # get the covariance
+  covar <- state$m2 / (state$n - 1)
+
+  # regularize it
+  mass_matrix <- (state$n / (state$n + 5)) *
+    covar + 1e-3 * (5 / (state$n + 5)) * state$eye
+
+  # cholesky it, accounting for occasional non-positive definiteness
+  t(jitchol(mass_matrix))
+
+}
+
+# set up adaptation window for covariance estimation
+adapt_window <- function (n_samples, init_prop = 0.15, term_prop = 0.1) {
+
+  init_buffer <- floor(n_samples * init_prop)
+  term_buffer <- floor(n_samples * term_prop)
+  window <- n_samples - (init_buffer + term_buffer)
+
+  # return an index to the iterations in the window
+  seq_len(window) + init_buffer
+
+}
+
+# project x to the true parameter scale to evaluate the density and gradient
+project_x <- function (x, mass_cholesky)
+  t(mass_cholesky %*% x)[1, ]
+
+# get gradients, including projection
+gradients <- function (x, dag, mass_cholesky) {
+  dag$send_parameters(project_x(x, mass_cholesky))
+  (dag$gradients() %*% mass_cholesky)[1, ]
+}
+
 
 

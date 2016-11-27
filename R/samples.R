@@ -101,10 +101,6 @@ samples <- function (...,
   # define the TF graph
   dag$define_tf()
 
-  # random starting locations
-  init <- dag$example_parameters()
-  init[] <- rnorm(length(init))
-
   # fetch the algorithm
   method <- switch(method,
                    hmc = hmc,
@@ -117,6 +113,14 @@ samples <- function (...,
   # update existing control with user overrides
   control[names(control_user)] <- control_user
 
+  # random starting locations if not provided
+  if (! 'init_proposal' %in% names(control_user)) {
+    control$init_proposal <- dag$example_parameters()
+    control$init_proposal[] <- rnorm(length(control$init_proposal))
+  }
+
+  init <- control$init_proposal
+
   # if the user didn't specify an epsilon, take a guess
   if (! 'epsilon' %in% names(control_user))
     control$epsilon <- guess_epsilon(dag, init)
@@ -126,8 +130,21 @@ samples <- function (...,
   if (! 'mass_cholesky' %in% names(control_user))
     control$mass_cholesky <- diag(length(init))
 
+  # if it's a 1D problem, there's no point estimating the mass matrix
+  if (length(init) == 1)
+    estimate_mass_matrix <- FALSE
+
   # if warmup is required, do that now and update init
   if (warmup > 0) {
+
+    # no adaptation if there are fewer than 20 warmups
+    if (warmup < 20 & (tune_epsilon | estimate_mass_matrix)) {
+
+      warning ('step size and mass matrix tuning are not being carried out as there are fewer than 20 warmup iterations')
+      tune_epsilon <- FALSE
+      estimate_mass_matrix <- FALSE
+
+    }
 
     if (verbose)
       message('warming up')
@@ -166,6 +183,10 @@ samples <- function (...,
   attr(draws_df, 'density') <- attr(draws, 'density')
   attr(draws_df, 'last_x') <- attr(draws, 'last_x')
   attr(draws_df, 'control') <- attr(draws, 'control')
+
+  # also send the dag
+  attr(draws_df, 'dag') <- dag
+
   draws_df
 
 }
