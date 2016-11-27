@@ -432,14 +432,14 @@ update_mass_state <- function (x, state) {
 get_mass_cholesky <- function (state) {
 
   # get the covariance
-  covar <- state$m2 / (state$n - 1)
+  covar <- state$m2 / max(1, state$n - 1)
 
   # regularize it
   mass_matrix <- (state$n / (state$n + 5)) *
     covar + 1e-3 * (5 / (state$n + 5)) * state$eye
 
   # cholesky it, accounting for occasional non-positive definiteness
-  t(jitchol(mass_matrix))
+  jitchol(mass_matrix)
 
 }
 
@@ -457,13 +457,13 @@ adapt_window <- function (n_samples, init_prop = 0.15, term_prop = 0.1) {
 
 # project x to the true parameter scale to evaluate the density and gradient
 project_x <- function (x, mass_cholesky)
-  t(mass_cholesky %*% x)[1, ]
+  (x %*% mass_cholesky)[1, ]
 
 # get gradients, including projection
 gradients <- function (x, dag, mass_cholesky) {
   dag$send_parameters(project_x(x, mass_cholesky))
-  (dag$gradients() %*% mass_cholesky)[1, ]
+  grad <- dag$gradients()
+  (mass_cholesky %*% grad)[, 1]
 }
-
 
 
