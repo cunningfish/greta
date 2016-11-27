@@ -20,7 +20,7 @@ nuts6 <- function (dag,
                                   gamma = 0.05,
                                   kappa = 0.75,
                                   init_prop = 0.15,
-                                  term_prop = 0.3)) {
+                                  term_prop = 0.1)) {
 
   # unpack control options
   unpack(control)
@@ -48,9 +48,15 @@ nuts6 <- function (dag,
   # if we're estimating the mass matrix
   if (estimate_mass_matrix) {
 
-    # determin adaptation window and set up covariance accumulator
+    # determine adaptation window and set up covariance accumulator
     window <- adapt_window(n_samples, init_prop, term_prop)
     mass_state <- init_mass_state(length(x))
+
+    # find the iterations on which to recalculate the matrix
+    # start on the 2nd then each time double the wait to the next
+    nw <- length(window)
+    n_doubles <- floor(log(nw - 1, 2))
+    which_update <- window[2^(0:n_doubles) + 1]
 
   }
 
@@ -190,19 +196,24 @@ nuts6 <- function (dag,
 
     }
 
-    # if we're estimating the mass matrix, and in the second half of the chain,
-    # store the trace
+    # if we're estimating the mass matrix, update the rolling estimate
     if (estimate_mass_matrix) {
+
       if (i %in% window) {
 
         # update the covariance matrix state
         x_projected <- project_x(x, mass_cholesky)
         mass_state <- update_mass_state(x_projected, mass_state)
 
-        # if there at least 2 samples are available, get the updated Cholesky
-        if ((i - window[1] - 1) > 1) {
+        if (i %in% which_update) {
+          # slow down updating of the cholesky, adding twice as many samples in
+          # each batch before recomputing
           mass_cholesky <- get_mass_cholesky(mass_state)
+
+          # restart the accumulator (to forget crappy old estimates)
+          mass_state <- init_mass_state(npar)
         }
+
       }
     }
 
