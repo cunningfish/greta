@@ -8,13 +8,16 @@ hmc <- function (dag,
                  thin,
                  verbose,
                  tune_epsilon = FALSE,
+                 estimate_mass_matrix = FALSE,
                  control = list(Lmin = 10,
                                 Lmax = 20,
                                 epsilon = 0.005,
-                                tune_control = list(target_acceptance = 0.651,
-                                                    accept_group = 100,
-                                                    gamma = 0.1,
-                                                    kappa = 0.75))) {
+                                mass_cholesky = NULL,
+                                init_proposal = NULL,
+                                target_acceptance = 0.651,
+                                accept_group = 100,
+                                gamma = 0.1,
+                                kappa = 0.75)) {
 
   # unpack control options
   unpack(control)
@@ -25,16 +28,9 @@ hmc <- function (dag,
   grad <- dag$gradients()
   logprob <- dag$log_density()
 
-  # initial epsilon tuning parameters
-  if (tune_epsilon) {
-
-    # unpack tuning options
-    unpack(tune_control)
-
-    # keep track of progress
+  # keep track of adaptation progress
+  if (tune_epsilon)
     epsilon_trace <- rep(NA, n_samples)
-
-  }
 
   # set up trace store (grab values of target variables from graph to get
   # dimension and names)

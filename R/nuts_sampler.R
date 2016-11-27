@@ -4,20 +4,23 @@
 # (https://github.com/mfouesneau/NUTS/blob/master/nuts.py)
 
 nuts6 <- function (dag,
-                  init,
-                  n_samples,
-                  thin,
-                  verbose,
-                  tune_epsilon = FALSE,
-                  estimate_mass_matrix = FALSE,
-                  control = list(max_doublings = 4,
-                                 epsilon = 0.05,
-                                 mass_cholesky = NULL,
-                                 tune_control = list(target_acceptance = 0.5,
-                                                     accept_group = 100,
-                                                     t0 = 10,
-                                                     gamma = 0.05,
-                                                     kappa = 0.75))) {
+                   init,
+                   n_samples,
+                   thin,
+                   verbose,
+                   tune_epsilon = FALSE,
+                   estimate_mass_matrix = FALSE,
+                   control = list(max_doublings = 4,
+                                  epsilon = 0.05,
+                                  mass_cholesky = NULL,
+                                  init_proposal = NULL,
+                                  target_acceptance = 0.5,
+                                  accept_group = 100,
+                                  t0 = 10,
+                                  gamma = 0.05,
+                                  kappa = 0.75,
+                                  init_prop = 0.15,
+                                  term_prop = 0.3)) {
 
   # unpack control options
   unpack(control)
@@ -31,9 +34,6 @@ nuts6 <- function (dag,
 
   # initial epsilon tuning parameters
   if (tune_epsilon) {
-
-    # unpack tuning options
-    unpack(tune_control)
 
     # keep track of tuner progress
     epsilon_trace <- c(epsilon, rep(NA, n_samples))
