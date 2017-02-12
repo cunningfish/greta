@@ -141,4 +141,11 @@ jitchol <- function (A, maxtries = 5, verbose = FALSE) {
     }
   }
   return(L)
+
+# create an array with the same dimensions as tensor and fill it with
+# consecutive increasing integers in python order
+dummy <- function (dims) {
+  vec <- seq_len(prod(dims)) - 1
+  unflatten_rowwise(vec, dims)
 }
+
